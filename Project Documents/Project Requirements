@@ -8,3 +8,13 @@ Should make player turns obvious
 Should make the rules obvious to a player
 Design should be accessible 
 
+Kyle's functional requirements:
+Should be able to create a new profile
+Load a save profile
+Change characters or boards
+Pause the game, quit/exit the game, and restart the game.
+Kyle's non-functional requirements:
+Main Menu should not take more than seven seconds to load
+Account information (passwords and payment info) should all be encrypted to the highest degree
+The system and server should support at least 250,000 users at any given time - worldwide.
+
