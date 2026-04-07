@@ -1,15 +1,13 @@
-"""
-mainmenu.py
------------
-MainMenuScreen: draws and handles input for the Main Menu state.
 
-Owns:
-  • Dark grid background
-  • Bouncing mouse-face logo (SomethingGood? team branding)
-  • Semi-transparent yellow panel with title + Play button
+# mainmenu.py
+# -----------
+# MainMenuScreen: draws and handles input for the Main Menu state.
+# Owns:
+#   • Dark grid background
+#   • Bouncing mouse-face logo (SomethingGood? team branding)
+#   • Semi-transparent yellow panel with title + Play button
+# Returns the next state string to GameManager via handle_event() / update().
 
-Returns the next state string to GameManager via handle_event() / update().
-"""
 
 import pygame
 
@@ -20,18 +18,16 @@ from ui_shared import (
 
 
 class MainMenuScreen:
-    """
-    Self-contained Main Menu screen.
-
-    Usage
-    -----
-    screen_obj = MainMenuScreen(pygame_surface)
+    # Self-contained Main Menu screen.
+    # Usage
+    # -----
+    # screen_obj = MainMenuScreen(pygame_surface)
     # each frame:
-    next_state = screen_obj.handle_event(event)   # returns new state or None
-    screen_obj.draw()
-    """
+    # next_state = screen_obj.handle_event(event)   # returns new state or None
+    # screen_obj.draw()
+    
 
-    # Logo bounding box size
+    # Logo bounding box size - used for collision detection with screen edges
     LOGO_W = 80
     LOGO_H = 80
 
@@ -55,19 +51,22 @@ class MainMenuScreen:
     # ── Public interface ──────────────────────────────────────────────────────
 
     def handle_event(self, event: pygame.event.Event) -> str | None:
-        """
-        Process one pygame event.
-        Returns the next STATE string if a transition should occur, else None.
-        """
+        # Processes clicks. If 'Play' is clicked, signals a transition to STATE_SETUP.
+
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self._play_rect and self._play_rect.collidepoint(event.pos):
+                # collidepoint is the standard way to check if a mouse click hit a UI element
                 return STATE_SETUP
         return None
 
     def draw(self):
-        """Render the full menu screen onto self.surface."""
+        # The Main Render Loop for this screen: order of calls dictates the Z-index.
         w, h = self.surface.get_size()
+
+        # 1. Update positions (Logic)
         self._update_logo(w, h)
+
+        # 2. Draw layers from back to front (Visuals)
         self._draw_background(w, h)
         self._draw_logo(self._logo_x, self._logo_y)
         self._draw_panel(w, h)
@@ -75,26 +74,34 @@ class MainMenuScreen:
     # ── Private helpers ───────────────────────────────────────────────────────
 
     def _update_logo(self, w: int, h: int):
-        """Advance the bouncing logo one frame."""
+        # Calculates the new position and bounce-back logic for the logo.
         self._logo_x += self._logo_vx
         self._logo_y += self._logo_vy
+
+        # X-Axis Collision: Flips velocity if the logo hits the left or right wall
         if self._logo_x <= 0 or self._logo_x + self.LOGO_W >= w:
             self._logo_vx *= -1
+            # Clamping prevents the logo from getting 'stuck' inside a wall during a resize
             self._logo_x = max(0.0, min(self._logo_x, float(w - self.LOGO_W)))
+
+        # Y-Axis Collision: Flips velocity if the logo hits the top or bottom wall
         if self._logo_y <= 0 or self._logo_y + self.LOGO_H >= h:
             self._logo_vy *= -1
+            # Prevents the logo from getting 'stuck' inside a wall during a resize
             self._logo_y = max(0.0, min(self._logo_y, float(h - self.LOGO_H)))
 
     def _draw_background(self, w: int, h: int):
-        """Dark background with subtle grid lines."""
+        # Dark background with subtle grid lines.
         self.surface.fill((15, 12, 10))
+        # Draw vertical lines every 30 pixels
         for gx in range(0, w, 30):
             pygame.draw.line(self.surface, (25, 20, 15), (gx, 0), (gx, h))
+        # Draw horizontal lines every 30 pixels
         for gy in range(0, h, 30):
             pygame.draw.line(self.surface, (25, 20, 15), (0, gy), (w, gy))
 
     def _draw_logo(self, x: float, y: float):
-        """Cute bouncing mouse face with team name label."""
+        # Cute bouncing mouse face with team name label.
         LOGO_COLOR   = (255, 220,  60)
         LOGO_OUTLINE = (120,  90,  10)
         cx = int(x + self.LOGO_W / 2)
@@ -106,7 +113,7 @@ class MainMenuScreen:
         pygame.draw.circle(self.surface, LOGO_OUTLINE, (cx, cy + 6), r, 2)
 
         # Ears
-        for _, ex in [(-1, cx - 22), (1, cx + 22)]:
+        for side, ex in [(-1, cx - 22), (1, cx + 22)]:
             pygame.draw.circle(self.surface, LOGO_COLOR,      (ex, cy - 18), 12)
             pygame.draw.circle(self.surface, LOGO_OUTLINE,    (ex, cy - 18), 12, 2)
             pygame.draw.circle(self.surface, (220, 140, 140), (ex, cy - 18),  8)
@@ -127,27 +134,29 @@ class MainMenuScreen:
                                  (cx + side * 4,  cy + 12 + dy),
                                  (cx + side * 26, cy + 10 + dy), 1)
 
-        # Team label
+        # Team label - rendered beneath the mascot face
         label = self.font_logo.render("SomethingGood?", True, LOGO_OUTLINE)
         self.surface.blit(label, (cx - label.get_width() // 2, cy + r + 10))
 
     def _draw_panel(self, w: int, h: int):
-        """Semi-transparent yellow panel with title and Play button."""
+        # Renders the central UI panel containing the game title and Play button.
         PANEL_W = min(420, w - 40)
         PANEL_H = 280
         PANEL_X = (w - PANEL_W) // 2
         PANEL_Y = (h - PANEL_H) // 2
 
-        # Panel fill
+        # 1. Semi-Transparent Background Layer
         panel_surf = pygame.Surface((PANEL_W, PANEL_H), pygame.SRCALPHA)
         panel_surf.fill((210, 180, 80, 160))
         pygame.draw.rect(panel_surf, (180, 150, 40, 80),
                          (0, 0, PANEL_W, PANEL_H), border_radius=18)
         self.surface.blit(panel_surf, (PANEL_X, PANEL_Y))
+
+        # 2. Solid Border
         pygame.draw.rect(self.surface, (200, 165, 50),
                          (PANEL_X, PANEL_Y, PANEL_W, PANEL_H), 2, border_radius=18)
 
-        # Title with drop shadow
+        # 3. Title with Drop Shadow: Drawing the same text twice with an offset
         shadow = self.font_title.render("Mouse Trap", True, (150, 120, 20))
         title  = self.font_title.render("Mouse Trap", True, ( 20,  15, 10))
         tx = PANEL_X + (PANEL_W - title.get_width()) // 2
@@ -155,21 +164,23 @@ class MainMenuScreen:
         self.surface.blit(shadow, (tx + 3, ty + 3))
         self.surface.blit(title,  (tx,     ty))
 
-        # Play button
+        # 4. Play Button with Hover Logic
         BTN_W, BTN_H = 160, 50
         BTN_X = (w   - BTN_W) // 2
         BTN_Y = PANEL_Y + 195
         btn_rect = pygame.Rect(BTN_X, BTN_Y, BTN_W, BTN_H)
 
+        # Reactive UI: Changes color when the user hovers over the button
         mx, my  = pygame.mouse.get_pos()
         hovered = btn_rect.collidepoint(mx, my)
         bg_col  = (255, 210,   0) if hovered else (210, 175,  40)
         txt_col = (255, 230,  80) if hovered else ( 20,  15,  10)
-
         pygame.draw.rect(self.surface, bg_col,        btn_rect, border_radius=10)
         pygame.draw.rect(self.surface, (120, 90, 10), btn_rect, 2, border_radius=10)
 
+        # Draw Button Text centered inside the Rect
         lbl = self.font_play.render("▶  Play", True, txt_col)
         self.surface.blit(lbl, lbl.get_rect(center=btn_rect.center))
 
+        # Update the collision rect for the handle_event method
         self._play_rect = btn_rect
