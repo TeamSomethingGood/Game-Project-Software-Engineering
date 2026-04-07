@@ -43,12 +43,16 @@ class GameOverScreen:
         self.message = msg
 
     def handle_event(self, event: pygame.event.Event) -> str | None:
+        # Processes clicks on the Game Over buttons and returns the corresponding
+        # state transition signal to GameManager.
         # Returns:
         #   SIGNAL_PLAY_AGAIN  – Play Again clicked
         #   STATE_MENU         – Main Menu clicked
         #   None               – no transition
         
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            # collidepoint is used here to check the mouse position against
+            # the rects we generated during the last draw() call.
             if "again" in self._btns and self._btns["again"].collidepoint(event.pos):
                 return SIGNAL_PLAY_AGAIN
             if "menu"  in self._btns and self._btns["menu"].collidepoint(event.pos):
@@ -104,7 +108,7 @@ class GameOverScreen:
         for i, (key, label, color) in enumerate(btn_labels):
             # bx calculates the specific x-coordinate for the i-th button center.
             bx = start_x + gap * i
-            
+
             self._btns[key] = draw_button(
                 self.surface, label, bx, row_y,
                 color, C_BG, self.font_large,
