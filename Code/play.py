@@ -1,17 +1,13 @@
-"""
-play.py
--------
-PlayScreen: draws and handles all input for the Active Gameplay state.
-
-Owns:
-  • HUD bar (turn indicator, mouse status chips, Pause + Quit buttons)
-  • Gameboard rendering
-  • Sprite rendering (mice tokens on top layer)
-  • Active player highlight ring
-  • All click routing for Mouse moves and Trapper wall placement
-
-Returns the next state string (or special signals) to GameManager.
-"""
+# play.py
+# -------
+# PlayScreen: draws and handles all input for the Active Gameplay state.
+# Owns:
+#   • HUD bar (turn indicator, mouse status chips, Pause + Quit buttons)
+#   • Gameboard rendering
+#   • Sprite rendering (mice tokens on top layer)
+#   • Active player highlight ring
+#   • All click routing for Mouse moves and Trapper wall placement
+# Returns the next state string (or special signals) to GameManager.
 
 import pygame
 
@@ -30,18 +26,9 @@ SIGNAL_TRAPPER_WIN = "SIGNAL_TRAPPER_WIN"
 
 
 class PlayScreen:
-    """
-    Self-contained Active Gameplay screen.
-
-    GameManager passes in the live gameboard, mice list, trapper, and
-    turn_manager references so this screen can read and mutate game state.
-
-    Usage
-    -----
-    screen_obj = PlayScreen(surface, gameboard, mice, trapper, turn_mgr)
-    next = screen_obj.handle_event(event)
-    screen_obj.draw()
-    """
+    # The Central Controller for active gameplay.
+    # Manages the 'Play Loop' by coordinating between the Gameboard, 
+    # the Mouse sprites, and the Turn Manager.
 
     def __init__(self, surface: pygame.Surface,
                  gameboard, mice: list, trapper, turn_mgr):
@@ -50,9 +37,13 @@ class PlayScreen:
         self.mice       = mice
         self.trapper    = trapper
         self.turn_mgr   = turn_mgr
+
+        # Spatial Memory: Stores coordinates of hexes that should 'glow'
+        # to guide the player's movement.
         self.highlighted: set[tuple[int, int]] = set()
 
-        # Sprite group for mouse tokens
+        # Sprite Management: Using a Group allows for batch updates and 
+        # optimized 'blitting' (copying pixels to the screen).
         self.sprite_group = pygame.sprite.Group()
         for m in self.mice:
             self.sprite_group.add(m)
@@ -61,7 +52,7 @@ class PlayScreen:
         self.font_med   = make_font(22)
         self.font_small = make_font(16)
 
-        # HUD button rects rebuilt each draw()
+        # UI Cache: Rebuilt every frame to ensure buttons work after window resizes.
         self._btns: dict[str, pygame.Rect] = {}
 
         self.refresh_highlights()
@@ -69,29 +60,35 @@ class PlayScreen:
     # ── Public interface ──────────────────────────────────────────────────────
 
     def handle_event(self, event: pygame.event.Event) -> str | None:
-        """
-        Returns:
-          STATE_PAUSED        – Pause button clicked
-          STATE_MENU          – Quit button clicked
-          SIGNAL_MOUSE_WIN    – a mouse reached the edge
-          SIGNAL_TRAPPER_WIN  – all paths blocked
-          None                – no transition
-        """
+        # The Master Event Router. 
+        # Decides if a click was a UI interaction (Pause/Quit) or a 
+        # gameplay interaction (Move/Wall).
+        # Returns:
+        #   STATE_PAUSED        – Pause button clicked
+        #   STATE_MENU          – Quit button clicked
+        #   SIGNAL_MOUSE_WIN    – a mouse reached the edge
+        #   SIGNAL_TRAPPER_WIN  – all paths blocked
+        #   None                – no transition
+        
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
 
-            # HUD buttons take priority
+            # 1. UI LAYER CHECK: HUD buttons take priority over the game world.
             if "pause" in self._btns and self._btns["pause"].collidepoint(mx, my):
                 return STATE_PAUSED
             if "quit" in self._btns and self._btns["quit"].collidepoint(mx, my):
                 return STATE_MENU
 
-            # Board click (offset into board-local coordinates)
+            # 2. COORDINATE TRANSLATION:
+            # Converts raw mouse Y to board-local Y by subtracting the HUD height (BOARD_TOP).
             bx, by = mx, my - BOARD_TOP
+
+            # 3. SPATIAL QUERY: Ask the board "Which hex did the user just touch?"
             cell = self.gameboard.cell_at_pixel(bx, by)
             if cell is None:
                 return None
 
+            # 4. STATE-DRIVEN LOGIC: Route the click based on whose turn it is.
             state, idx = self.turn_mgr.current()
 
             if state == TURN_MOUSE:
@@ -107,72 +104,71 @@ class PlayScreen:
         return None
 
     def refresh_highlights(self):
-        """Recompute which hexes should glow for the current player's turn."""
+        # UX Polish: Calculates legal moves for the active player so 
+        # the UI can provide visual 'Affordance' (glow effect).
         self.highlighted = set()
         state, idx = self.turn_mgr.current()
         if state == TURN_MOUSE and idx < len(self.mice):
+            # Query the graph for adjacent, unblocked nodes.
             m = self.mice[idx]
             self.highlighted = set(
                 self.gameboard.get_active_neighbours(m.col, m.row)
             )
 
     def draw(self):
-        """Render the full play screen onto self.surface."""
+        # The Render Pipeline: Orders calls from back (Background) 
+        # to front (Active Highlight Ring).
         w, h = self.surface.get_size()
         self.surface.fill(C_BG)
-        self._draw_hud(w)
-        self._draw_board(w, h)
-        self._draw_sprites()
-        self._draw_active_ring()
+        self._draw_hud(w)           # Layer 0: Top Status Bar
+        self._draw_board(w, h)      # Layer 1: Hex Grid
+        self._draw_sprites()        # Layer 2: Mouse Tokens
+        self._draw_active_ring()    # Layer 3: Active Player Highlight
 
     # ── Private click handlers ────────────────────────────────────────────────
 
     def _handle_mouse_click(self, cell, idx: int) -> str | None:
-        """
-        Process a board click during a Mouse's turn.
-        If this mouse has no escape path it is trapped — skip its turn.
-        Only trigger Trapper win if ALL mice are trapped or escaped.
-        """
+        # Process a board click during a Mouse's turn.
+        # If this mouse has no escape path it is trapped — skip its turn.
+        # Only trigger Trapper win if ALL mice are trapped or escaped.
         if idx >= len(self.mice):
             return None
         mouse = self.mice[idx]
 
-        # If this mouse is trapped, skip its turn automatically
+        # Automatic Turn Skipping: If a mouse is physically boxed in, 
+        # mark it trapped and move to the next turn immediately.
         if not mouse.has_escape_path():
             mouse.trapped = True
             self.turn_mgr.advance()
             self.refresh_highlights()
-            # Now check if all mice are either escaped or trapped
+            # Win Condition: Trapper wins if no mice can move anymore.
             if all(m.escaped or m.trapped for m in self.mice):
                 return SIGNAL_TRAPPER_WIN
             return None
 
+        # Movement Validation: Check if the clicked cell is a legal move (adjacent and unblocked).
         moved = mouse.try_move(cell.col, cell.row)
         if moved:
             if mouse.escaped:
+                # Signal includes the index so the game knows WHICH mouse won.
                 return SIGNAL_MOUSE_WIN + f":{idx}"
             self.turn_mgr.advance()
             self.refresh_highlights()
         return None
 
     def _handle_trapper_click(self, cell) -> str | None:
-        """
-        Process a board click during the Trapper's turn.
-        Win only if ALL non-escaped mice are trapped.
-        """
+        # Processes logic for the Trapper's turn (wall placement).
         occupied = [(m.col, m.row) for m in self.mice]
         placed   = self.trapper.try_place_wall(cell.col, cell.row, occupied)
         if placed:
-            # Mark any newly trapped mice
+            # Re-check every mouse: Did this new wall just trap someone?
             for mouse in self.mice:
                 if not mouse.escaped and not mouse.has_escape_path():
                     mouse.trapped = True
-
-            # Win only if every mouse is either escaped or trapped
+            # Global Win Check: If all non-escaped mice are now trapped, Trapper wins.
             active_mice = [m for m in self.mice if not m.escaped]
             if all(m.trapped for m in active_mice):
                 return SIGNAL_TRAPPER_WIN
-
             self.turn_mgr.advance()
             self.refresh_highlights()
         return None
@@ -180,18 +176,18 @@ class PlayScreen:
     # ── Private drawing helpers ───────────────────────────────────────────────
 
     def _draw_hud(self, w: int):
-        """Draw the top HUD bar: turn label, mouse chips, Pause/Quit buttons."""
+        # Renders the dashboard: Turn info, player status, and UI buttons.
         pygame.draw.rect(self.surface, C_PANEL, (0, 0, w, BOARD_TOP))
         pygame.draw.line(self.surface, C_ACCENT, (0, BOARD_TOP), (w, BOARD_TOP), 1)
 
-        # Turn label (left)
+        # Turn Indicator: Changes color based on the current active player.
         state, idx = self.turn_mgr.current()
         color     = C_MOUSE_HUD[idx] if state == TURN_MOUSE else C_ACCENT2
         turn_surf = self.font_med.render(self.turn_mgr.turn_label(), True, color)
         self.surface.blit(turn_surf,
                           (16, (BOARD_TOP - turn_surf.get_height()) // 2))
 
-        # Mouse status chips (right side, before buttons)
+        # Status Chips: Displays the status of each mouse on the board.
         chip_x = w - 270
         for i, m in reversed(list(enumerate(self.mice))):
             if m.escaped:
@@ -206,7 +202,7 @@ class PlayScreen:
             self.surface.blit(chip_surf,
                               (chip_x, (BOARD_TOP - chip_surf.get_height()) // 2))
 
-        # Pause + Quit buttons (far right)
+        # HUD Action Buttons: QUIT and PAUSE.
         self._btns.clear()
         btn_cy     = BOARD_TOP // 2
         quit_rect  = draw_button(self.surface, "✕ QUIT",  w - 70,  btn_cy,
@@ -217,25 +213,26 @@ class PlayScreen:
         self._btns["pause"] = pause_rect
 
     def _draw_board(self, w: int, h: int):
-        """Render the hex grid onto the board sub-surface."""
+        # Uses a Subsurface to clip the board rendering so it doesn't bleed into the HUD.
         board_surface = self.surface.subsurface(
             pygame.Rect(0, BOARD_TOP, w, h - BOARD_TOP)
         )
         self.gameboard.draw(board_surface, self.highlighted)
 
     def _draw_sprites(self):
-        """Blit all mouse sprites, offset by the HUD height."""
+        # Batch rendering for all Mouse tokens, offset by the HUD height.
         for sprite in self.sprite_group:
             sprite.update()
             self.surface.blit(sprite.image,
                               (sprite.rect.x, sprite.rect.y + BOARD_TOP))
 
     def _draw_active_ring(self):
-        """Draw a coloured outline around the currently active mouse token."""
+        # Visual Cue: Outlines the active mouse's hexagon to show focus.
         state, idx = self.turn_mgr.current()
         if state == TURN_MOUSE and idx < len(self.mice):
             m    = self.mice[idx]
             cell = self.gameboard.get_cell(m.col, m.row)
             if cell:
+                # Map vertices from local board space to screen space.
                 pts = [(int(x), int(y + BOARD_TOP)) for x, y in cell.vertices]
                 pygame.draw.polygon(self.surface, C_MOUSE_HUD[idx], pts, 3)
