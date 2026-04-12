@@ -27,7 +27,7 @@ SIGNAL_TRAPPER_WIN = "SIGNAL_TRAPPER_WIN"
 
 class PlayScreen:
     # The Central Controller for active gameplay.
-    # Manages the 'Play Loop' by coordinating between the Gameboard, 
+    # Manages the 'Play Loop' by coordinating between the Gameboard,
     # the Mouse sprites, and the Turn Manager.
 
     def __init__(self, surface: pygame.Surface,
@@ -42,7 +42,7 @@ class PlayScreen:
         # to guide the player's movement.
         self.highlighted: set[tuple[int, int]] = set()
 
-        # Sprite Management: Using a Group allows for batch updates and 
+        # Sprite Management: Using a Group allows for batch updates and
         # optimized 'blitting' (copying pixels to the screen).
         self.sprite_group = pygame.sprite.Group()
         for m in self.mice:
@@ -60,16 +60,9 @@ class PlayScreen:
     # ── Public interface ──────────────────────────────────────────────────────
 
     def handle_event(self, event: pygame.event.Event) -> str | None:
-        # The Master Event Router. 
-        # Decides if a click was a UI interaction (Pause/Quit) or a 
+        # The Master Event Router.
+        # Decides if a click was a UI interaction (Pause/Quit) or a
         # gameplay interaction (Move/Wall).
-        # Returns:
-        #   STATE_PAUSED        – Pause button clicked
-        #   STATE_MENU          – Quit button clicked
-        #   SIGNAL_MOUSE_WIN    – a mouse reached the edge
-        #   SIGNAL_TRAPPER_WIN  – all paths blocked
-        #   None                – no transition
-        
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
 
@@ -80,10 +73,10 @@ class PlayScreen:
                 return STATE_MENU
 
             # 2. COORDINATE TRANSLATION:
-            # Converts raw mouse Y to board-local Y by subtracting the HUD height (BOARD_TOP).
+            # Converts raw mouse Y to board-local Y by subtracting the HUD height.
             bx, by = mx, my - BOARD_TOP
 
-            # 3. SPATIAL QUERY: Ask the board "Which hex did the user just touch?"
+            # 3. SPATIAL QUERY: Ask the board which hex the user clicked.
             cell = self.gameboard.cell_at_pixel(bx, by)
             if cell is None:
                 return None
@@ -104,20 +97,18 @@ class PlayScreen:
         return None
 
     def refresh_highlights(self):
-        # UX Polish: Calculates legal moves for the active player so 
+        # UX Polish: Calculates legal moves for the active player so
         # the UI can provide visual 'Affordance' (glow effect).
         self.highlighted = set()
         state, idx = self.turn_mgr.current()
         if state == TURN_MOUSE and idx < len(self.mice):
-            # Query the graph for adjacent, unblocked nodes.
             m = self.mice[idx]
             self.highlighted = set(
                 self.gameboard.get_active_neighbours(m.col, m.row)
             )
 
     def draw(self):
-        # The Render Pipeline: Orders calls from back (Background) 
-        # to front (Active Highlight Ring).
+        # The Render Pipeline: Orders calls from back to front.
         w, h = self.surface.get_size()
         self.surface.fill(C_BG)
         self._draw_hud(w)           # Layer 0: Top Status Bar
@@ -125,35 +116,66 @@ class PlayScreen:
         self._draw_sprites()        # Layer 2: Mouse Tokens
         self._draw_active_ring()    # Layer 3: Active Player Highlight
 
+    # ── Turn management ───────────────────────────────────────────────────────
+
+    def _skip_trapped_mice(self) -> str | None:
+        # After any turn advances, automatically skip forward past any mice
+        # that are already trapped — no click required from the player.
+        # When a trapped mouse is skipped, its paired Trapper turn is also
+        # skipped since there's no point in the Trapper countering a turn
+        # that never happened. Loops until a free mouse or a legitimate
+        # trapper turn is found.
+        # Returns SIGNAL_TRAPPER_WIN if all mice end up trapped.
+        for _ in range(len(self.turn_mgr._sequence)):
+            state, idx = self.turn_mgr.current()
+
+            if state == TURN_MOUSE:
+                mouse = self.mice[idx]
+
+                # Mark trapped if not already.
+                if not mouse.trapped and not mouse.has_escape_path():
+                    mouse.trapped = True
+
+                if mouse.trapped:
+                    # Check win before skipping.
+                    if all(m.escaped or m.trapped for m in self.mice):
+                        return SIGNAL_TRAPPER_WIN
+                    # Skip the mouse turn.
+                    self.turn_mgr.advance()
+                    # Also skip the paired trapper turn that follows.
+                    self.turn_mgr.advance()
+                    continue
+
+                # Free mouse found — stop, it gets to play.
+                break
+
+            else:
+                # It's the trapper's turn and we got here legitimately
+                # (a real mouse played before this), so stop skipping.
+                break
+
+        self.refresh_highlights()
+        return None
+
     # ── Private click handlers ────────────────────────────────────────────────
 
     def _handle_mouse_click(self, cell, idx: int) -> str | None:
         # Process a board click during a Mouse's turn.
-        # If this mouse has no escape path it is trapped — skip its turn.
-        # Only trigger Trapper win if ALL mice are trapped or escaped.
         if idx >= len(self.mice):
             return None
         mouse = self.mice[idx]
 
-        # Automatic Turn Skipping: If a mouse is physically boxed in, 
-        # mark it trapped and move to the next turn immediately.
-        if not mouse.has_escape_path():
-            mouse.trapped = True
-            self.turn_mgr.advance()
-            self.refresh_highlights()
-            # Win Condition: Trapper wins if no mice can move anymore.
-            if all(m.escaped or m.trapped for m in self.mice):
-                return SIGNAL_TRAPPER_WIN
-            return None
-
-        # Movement Validation: Check if the clicked cell is a legal move (adjacent and unblocked).
+        # Movement Validation: Check if the clicked cell is a legal move.
         moved = mouse.try_move(cell.col, cell.row)
         if moved:
             if mouse.escaped:
-                # Signal includes the index so the game knows WHICH mouse won.
+                # Signal includes the index so GameManager knows which mouse won.
                 return SIGNAL_MOUSE_WIN + f":{idx}"
             self.turn_mgr.advance()
-            self.refresh_highlights()
+            # Auto-skip any trapped mice before the next turn starts.
+            result = self._skip_trapped_mice()
+            if result:
+                return result
         return None
 
     def _handle_trapper_click(self, cell) -> str | None:
@@ -161,16 +183,21 @@ class PlayScreen:
         occupied = [(m.col, m.row) for m in self.mice]
         placed   = self.trapper.try_place_wall(cell.col, cell.row, occupied)
         if placed:
-            # Re-check every mouse: Did this new wall just trap someone?
+            # Re-check every mouse: did this new wall just trap someone?
             for mouse in self.mice:
                 if not mouse.escaped and not mouse.has_escape_path():
                     mouse.trapped = True
-            # Global Win Check: If all non-escaped mice are now trapped, Trapper wins.
+
+            # Global Win Check: if all non-escaped mice are now trapped, Trapper wins.
             active_mice = [m for m in self.mice if not m.escaped]
             if all(m.trapped for m in active_mice):
                 return SIGNAL_TRAPPER_WIN
+
             self.turn_mgr.advance()
-            self.refresh_highlights()
+            # Auto-skip any trapped mice before the next turn starts.
+            result = self._skip_trapped_mice()
+            if result:
+                return result
         return None
 
     # ── Private drawing helpers ───────────────────────────────────────────────
@@ -205,15 +232,12 @@ class PlayScreen:
         # HUD Action Buttons: QUIT and PAUSE.
         self._btns.clear()
         btn_cy     = BOARD_TOP // 2
-        quit_rect  = draw_button(self.surface, "✕ QUIT",  w - 70,  btn_cy,
-                                 C_RED,    C_PANEL, self.font_small)
         pause_rect = draw_button(self.surface, "⏸ PAUSE", w - 170, btn_cy,
                                  C_ACCENT, C_PANEL, self.font_small)
-        self._btns["quit"]  = quit_rect
         self._btns["pause"] = pause_rect
 
     def _draw_board(self, w: int, h: int):
-        # Uses a Subsurface to clip the board rendering so it doesn't bleed into the HUD.
+        # Uses a Subsurface to clip board rendering so it doesn't bleed into the HUD.
         board_surface = self.surface.subsurface(
             pygame.Rect(0, BOARD_TOP, w, h - BOARD_TOP)
         )
